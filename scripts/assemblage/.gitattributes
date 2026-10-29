@@ -1,0 +1,3 @@
+# Fins de ligne des lanceurs : CRLF pour cmd.exe, LF pour bash (même dans un zip GitHub).
+*.bat text eol=crlf
+*.sh text eol=lf

@@ -1,0 +1,4 @@
+# Environnement Python, modèles téléchargés par l'installeur, cache Python
+.venv/
+modeles/
+__pycache__/

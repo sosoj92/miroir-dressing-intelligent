@@ -1,0 +1,119 @@
+@import "tailwindcss";
+
+/* Direction A : police système, trois styles de texte, un seul accent (prune). */
+@theme {
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  --color-accent: #8a3577;
+  --color-on-accent: #ffffff;
+  --color-canvas: #f2f2f7;
+  --color-surface: #ffffff;
+  --color-ink: #1c1c1e;
+  --color-muted: #6e6e73;
+  --color-separator: #c6c6c8;
+  /* Contrôles du téléphone : fond d'un contrôle segmenté et d'une ligne touchée, interrupteur
+     éteint, segment choisi (components/gestion/). */
+  --color-fill: rgba(118, 118, 128, 0.12);
+  --color-switch-off: #e9e9ea;
+  --color-segment: #ffffff;
+  /* Relief du segment choisi et de la pastille de l'interrupteur, comme sur iPhone : en clair, le
+     blanc se lit à peine sur leur fond gris. Ombre neutre, jamais colorée. Tailwind recopie la
+     valeur dans shadow-control : la même dans les deux thèmes (à peine visible en sombre). */
+  --shadow-control: 0 3px 8px rgb(0 0 0 / 0.12), 0 3px 1px rgb(0 0 0 / 0.04);
+  /* Plaque sous les photos détourées (tenues de Demain, photo de la fiche) : gris très foncé, le
+     même en clair et en sombre, comme une visionneuse de photos. Les bords du détourage s'y fondent
+     et un vêtement noir reste lisible. Jamais redéfinie dans le bloc sombre. */
+  --color-photo: #1c1c1e;
+  --color-photo-muted: #98989f;
+
+  /* Mouvement du téléphone (retour au toucher, coche du marquage, curseur du contrôle segmenté) :
+     courbes sans dépassement, ni ressort ni rebond. Noms distincts de --ease-in et --ease-out de
+     Tailwind, que l'interrupteur utilise. */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+
+  --text-title: 28px;
+  --text-title--line-height: 34px;
+  --text-title--font-weight: 600;
+  --text-body: 17px;
+  --text-body--line-height: 22px;
+  --text-footnote: 15px;
+  --text-footnote--line-height: 20px;
+
+  /* Miroir (tablette 800×1280 derrière un miroir sans tain, lue à 1–2 m) : trois tailles, du
+     blanc ou un gris clair, jamais plus fin que 400 ni plus sombre que #b0b0b0 (sauf la veille).
+     Indépendant du thème du système : ces valeurs ne changent pas en mode sombre. */
+  --text-mirror-lg: 52px;
+  --text-mirror-lg--line-height: 60px;
+  --text-mirror-md: 40px;
+  --text-mirror-md--line-height: 48px;
+  --text-mirror-sm: 32px;
+  --text-mirror-sm--line-height: 40px;
+  /* Messages (« Bonne journée ») et action du test des touches ; heure de la veille. */
+  --text-mirror-xl: 64px;
+  --text-mirror-xl--line-height: 72px;
+  --text-mirror-clock: 140px;
+  --text-mirror-clock--line-height: 1;
+  --color-mirror-ink: #ffffff;
+  --color-mirror-dim: #cccccc;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-accent: #d99bcb;
+    --color-on-accent: #000000;
+    --color-canvas: #000000;
+    --color-surface: #1c1c1e;
+    --color-ink: #f2f2f7;
+    --color-muted: #98989f;
+    --color-separator: #38383a;
+    --color-fill: rgba(118, 118, 128, 0.24);
+    --color-switch-off: #39393d;
+    --color-segment: #636366;
+  }
+}
+
+/* Cases, menus et barres de défilement suivent le thème du système. Le miroir reste en sombre :
+   html:has([data-screen="mirror"]), plus bas, est plus spécifique que :root. */
+:root {
+  color-scheme: light dark;
+}
+
+/* Écrans du téléphone. */
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
+
+/* Écran miroir : noir pur partout, y compris autour de la page (docs/conception.md §4, AGENTS.md Design). */
+html:has([data-screen="mirror"]),
+html:has([data-screen="mirror"]) body,
+[data-screen="mirror"] {
+  background: #000;
+  color: #fff;
+  color-scheme: dark;
+}
+
+/* Pas de souris ni de sélection derrière la vitre ; aucune barre de défilement. */
+html:has([data-screen="mirror"]) body {
+  overflow: hidden;
+}
+
+[data-screen="mirror"] {
+  cursor: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Animations réduites dans le système : transitions et animations CSS quasi instantanées, partout. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

@@ -1,0 +1,51 @@
+# Outil du PC qui fabrique le paquet d'import « assemblage » à partir des photos portées sur fond vert
+# (README.md de ce dossier). Ce ne sont que des scripts : uv ne construit ni n'installe de paquet,
+# il crée seulement .venv avec ces versions exactes (uv.lock).
+[project]
+name = "mon-dressing-photos"
+version = "1.0.0"
+description = "Photos portees sur fond vert -> paquet d'import de Mon Dressing (silhouettes assemblees)."
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "numpy==2.5.4",
+    "opencv-python==5.0.0.93",
+    "pillow==13.0.0",
+    # Parseur de vêtements (SegFormer, FASHN AI) : poids téléchargés une fois par l'installeur dans
+    # modeles/ ; licence NVIDIA Source Code License for SegFormer, usage non commercial seulement.
+    "fashn-human-parser==0.1.1",
+    "torch==2.14.1",
+    "transformers==5.20.2",
+    "huggingface-hub==2.3.0",
+]
+
+[project.optional-dependencies]
+# Photos HEIC d'iPhone (l'installeur le demande) ; sans lui, exporter les photos en JPEG.
+heic = ["pillow-heif==1.8.1"]
+
+[tool.uv]
+# Windows, Linux et Mac Apple Silicon : torch n'a plus de version récente pour les Mac Intel.
+environments = [
+    "sys_platform == 'win32'",
+    "sys_platform == 'linux'",
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
+# Dépendances indirectes figées aux versions de l'environnement de référence (chaîne validée).
+constraint-dependencies = [
+    "filelock==3.32.3",
+    "fsspec==2026.7.0",
+    "hf-xet==1.7.0",
+    "markupsafe==3.0.3",
+    "networkx==3.6.1",
+    "setuptools==78.1.0",
+]
+
+# torch sans CUDA (le parseur tourne sur le processeur) : index officiel « cpu » de PyTorch pour
+# Windows et Linux ; sur Mac, la roue de PyPI est déjà sans CUDA.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform != 'darwin'" }]

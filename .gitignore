@@ -1,0 +1,61 @@
+# Dépendances et builds
+node_modules/
+.next/
+out/
+build/
+coverage/
+playwright-report/
+test-results/
+blob-report/
+playwright/.auth/
+.vercel/
+next-env.d.ts
+*.tsbuildinfo
+
+# Secrets : aucun fichier .env n'est commité, sauf le modèle sans valeurs
+.env*
+!.env.example
+*.pem
+*.key
+
+# Journaux
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Système
+.DS_Store
+Thumbs.db
+
+# Python (scripts/assemblage)
+__pycache__/
+*.pyc
+.venv/
+
+# Moteur MediaPipe copié depuis node_modules et modèles téléchargés au predev / prebuild
+# (scripts/mediapipe-assets.mjs)
+public/mediapipe/wasm/
+public/mediapipe/models/*.task
+
+# Fixtures d'assemblage : repères tirés de photos personnelles, générés en local avec
+# scripts/assemblage/ref_fixture.py, jamais commités (les tests qui les lisent sont sautés sans elles)
+lib/assembly/fixtures/*.json
+
+# Journaux de gestes et données personnelles, jamais commités
+lib/gestures/fixtures/
+
+# Photos, tableaux et paquets d'import : aucun n'appartient au dépôt (seul app/favicon.ico est une image
+# suivie). Le dossier de photos se range en dehors du projet ; ces règles ne sont qu'un filet. Classes
+# [xX] : la casse compte pour git sous Linux.
+*.[jJ][pP][gG]
+*.[jJ][pP][eE][gG]
+*.[pP][nN][gG]
+*.[wW][eE][bB][pP]
+*.[hH][eE][iI][cCfF]
+*.[zZ][iI][pP]
+*.[cC][sS][vV]
+db.json
+Dressing/
+travail/
+controle/

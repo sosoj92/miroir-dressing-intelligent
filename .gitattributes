@@ -1,0 +1,5 @@
+# Fins de ligne des lanceurs, y compris dans l'archive ZIP de GitHub : CRLF pour cmd.exe (avec des LF
+# seuls, cmd.exe saute parfois les étiquettes des .bat), LF pour bash.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.sh text eol=lf

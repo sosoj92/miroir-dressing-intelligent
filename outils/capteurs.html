@@ -1,0 +1,251 @@
+<!doctype html>
+<!--
+  Capteurs du miroir : page de démonstration locale, hors de l'app Mon Dressing.
+  La webcam du PC, le squelette du corps et les 21 points de chaque main en vert, et une version
+  simplifiée de la méthode des zones du miroir, en direct (seuils recopiés de lib/gestures/constants.ts ;
+  sans la garde « de profil » ni le délai d'armement : l'app fait foi).
+  - À ouvrir en local, servie par un petit serveur (outils/README.md) : la caméra n'est permise que sur
+    localhost ou en HTTPS.
+  - Pour cette page de démo seulement, MediaPipe (@mediapipe/tasks-vision 0.10.14) est chargé depuis le
+    CDN jsDelivr, et les modèles (pose_landmarker_full, gesture_recognizer) depuis storage.googleapis.com.
+    L'app, elle, sert ses propres fichiers et ne charge rien d'un CDN.
+  - Tout tourne dans le navigateur : aucune image n'est envoyée ni enregistrée.
+  Touches : Z zones, H texte, F plein écran.
+-->
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Capteurs du miroir</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #000; color: #e6e6e6; font: 16px/1.4 system-ui, sans-serif; overflow: hidden; }
+  #stage { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
+  canvas { max-width: 100vw; max-height: 100vh; transform: scaleX(-1); }
+  #hud { position: fixed; left: 16px; top: 12px; font: 15px/1.5 ui-monospace, Consolas, monospace; color: #ffe14d; white-space: pre; text-shadow: 0 0 4px #000, 0 0 2px #000; }
+  #flash { position: fixed; left: 0; right: 0; top: 8%; text-align: center; font: 600 44px/1.2 ui-monospace, Consolas, monospace; color: #39ff6a; text-shadow: 0 0 12px rgba(57,255,106,0.8), 0 0 3px #000; opacity: 0; transition: opacity 0.15s; }
+  #flash.on { opacity: 1; }
+  #keys { position: fixed; right: 16px; bottom: 12px; font: 13px ui-monospace, Consolas, monospace; color: #6f6f6f; }
+  body.clean #hud, body.clean #keys { display: none; }
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="view"></canvas></div>
+<div id="hud">Chargement…</div>
+<div id="flash"></div>
+<div id="keys">Z zones · H texte · F plein écran</div>
+<script type="module">
+// Vue « capteurs » pour filmer : la webcam, le squelette du corps et les 21 points de chaque main,
+// en vert, avec la méthode des zones du miroir en direct. Tout tourne dans le navigateur, sur ce PC :
+// aucune image n'est envoyée ni enregistrée.
+import { FilesetResolver, PoseLandmarker, GestureRecognizer, DrawingUtils } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs';
+
+const WASM = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm';
+const POSE_MODEL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task';
+const GESTURE_MODEL = 'https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task';
+
+// Les réglages du miroir (méthode des zones, lib/gestures/constants.ts).
+const MIN_VISIBILITY = 0.5, BODY_VISIBILITY = 0.6, ZONE_SMOOTHING = 0.75;
+const CENTER_IN = 0.8, SIDE_OUT = 1.3, EXIT_FRAMES = 2, GESTURE_COOLDOWN_MS = 500;
+const WAIST = 0.62, BAND_TOP = 1.2, HORIZONTAL = 1.2, UP_LINE = 0.65, DOWN_LINE = 0.2, THIGH_FRONT = 1.6;
+const HOLD_MS = 1000, HOLD_PAUSE_MS = 1500, HOLD_MIN_SCORE = 0.6;
+const HOLDS = { Thumb_Up: 'Oui', Closed_Fist: 'Non', Victory: 'Veste suivante' };
+const NAMES = { Thumb_Up: 'pouce levé', Closed_Fist: 'poing', Victory: 'V', Open_Palm: 'main ouverte', Pointing_Up: 'index levé', ILoveYou: 'love', None: '—' };
+const LM = { ls: 11, rs: 12, lw: 15, rw: 16, li: 19, ri: 20, lh: 23, rh: 24, lk: 25, rk: 26 };
+
+const GREEN = '#39ff6a', GREEN_DIM = 'rgba(57,255,106,0.55)', CYAN = '#3cc8ff';
+const $ = (id) => document.getElementById(id);
+const hud = $('hud'), flashEl = $('flash');
+const canvas = $('view'), ctx = canvas.getContext('2d');
+const draw = new DrawingUtils(ctx);
+let showZones = true;
+
+addEventListener('keydown', (e) => {
+  if (e.key === 'z' || e.key === 'Z') showZones = !showZones;
+  if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('clean');
+  if (e.key === 'f' || e.key === 'F') document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+});
+
+let flashTimer = 0;
+function flash(text) {
+  flashEl.textContent = text; flashEl.classList.add('on');
+  clearTimeout(flashTimer); flashTimer = setTimeout(() => flashEl.classList.remove('on'), 1100);
+}
+
+// ---------- zones (comme le miroir) ----------
+const hands = { l: { state: 'repos', outSide: 0, ax: 0, ay: 0 }, r: { state: 'repos', outSide: 0, ax: 0, ay: 0 } };
+let lastGestureAt = 0, zoneL = null;
+function points(lm) {
+  const out = {};
+  for (const [k, i] of Object.entries(LM)) out[k] = { x: lm[i].x * canvas.width, y: lm[i].y * canvas.height, v: lm[i].visibility ?? 1 };
+  out.hm = { x: (out.lh.x + out.rh.x) / 2, y: (out.lh.y + out.rh.y) / 2, v: Math.min(out.lh.v, out.rh.v) };
+  return out;
+}
+function blend(prev, next, k) {
+  if (!prev) return next;
+  const out = {};
+  for (const key of Object.keys(next)) out[key] = { x: next[key].x * k + prev[key].x * (1 - k), y: next[key].y * k + prev[key].y * (1 - k), v: next[key].v };
+  return out;
+}
+function zonesOf(L) {
+  const T = Math.hypot(L.hm.x - (L.ls.x + L.rs.x) / 2, L.hm.y - (L.ls.y + L.rs.y) / 2);
+  const shoulderY = (L.ls.y + L.rs.y) / 2;
+  return {
+    T, up: shoulderY - UP_LINE * T, down: L.hm.y + DOWN_LINE * T, waist: shoulderY + WAIST * T,
+    chest: { y0: shoulderY - BAND_TOP * T, y1: shoulderY + WAIST * T, cx: (L.ls.x + L.rs.x) / 2, half: Math.max(Math.abs(L.ls.x - L.rs.x) / 2, 1) },
+    hipsCx: L.hm.x, hipsHalf: Math.max(Math.abs(L.lh.x - L.rh.x) / 2, 1),
+  };
+}
+function gestures(L, now) {
+  const frame = { l: null, r: null, body: true, zones: null };
+  if (!(L.ls.v >= BODY_VISIBILITY && L.rs.v >= BODY_VISIBILITY && L.lh.v >= BODY_VISIBILITY && L.rh.v >= BODY_VISIBILITY)) {
+    hands.l.state = hands.r.state = 'repos'; frame.body = false;
+    return frame;
+  }
+  const Z = zonesOf(L); frame.zones = Z;
+  const chest = Z.chest;
+  for (const side of ['l', 'r']) {
+    const H = hands[side], wr = L[side + 'w'], idx = L[side + 'i'];
+    if (wr.v < MIN_VISIBILITY || idx.v < MIN_VISIBILITY) { H.state = 'repos'; H.outSide = 0; continue; }
+    const hx = (wr.x + idx.x) / 2, hy = (wr.y + idx.y) / 2;
+    const u = -(hx - chest.cx) / chest.half;
+    // Comme le miroir : une main déjà armée ne se réarme plus au-dessus de la ligne du haut.
+    const inChest = Math.abs(u) < CENTER_IN && hy >= chest.y0 && hy < chest.y1 && !(H.state === 'arme' && hy < Z.up);
+    frame[side] = { x: hx, y: hy, u };
+    if (inChest) { H.state = 'arme'; H.ax = hx; H.ay = hy; H.outSide = 0; continue; }
+    if (H.state !== 'arme') continue;
+    const dx = hx - H.ax, dy = hy - H.ay;
+    let action = null;
+    if (Math.abs(u) > SIDE_OUT && Math.abs(dx) > HORIZONTAL * Math.abs(dy) && hy > Z.up && hy < Z.down) action = u > 0 ? 'Haut suivant →' : '← Haut précédent';
+    else if (hy < Z.up && Math.abs(dy) > HORIZONTAL * Math.abs(dx)) action = 'Bas suivant ↑';
+    else if (hy > Z.down && Math.abs(dy) > HORIZONTAL * Math.abs(dx) && Math.abs(hx - Z.hipsCx) < THIGH_FRONT * Z.hipsHalf) action = 'Bas précédent ↓';
+    if (!action) { H.outSide = 0; continue; }
+    H.outSide += 1;
+    if (H.outSide < EXIT_FRAMES || now - lastGestureAt <= GESTURE_COOLDOWN_MS) continue;
+    H.state = 'repos'; H.outSide = 0; lastGestureAt = now;
+    flash(action);
+  }
+  return frame;
+}
+
+// ---------- gestes tenus (pouce, poing, V) ----------
+let hold = null, lastHoldAt = 0;
+function holds(result, now) {
+  let best = null;
+  (result?.gestures ?? []).forEach((g, i) => {
+    const c = g[0];
+    if (c && HOLDS[c.categoryName] && c.score >= HOLD_MIN_SCORE && (!best || c.score > best.score)) best = { name: c.categoryName, score: c.score, i };
+  });
+  if (!best || now - lastHoldAt < HOLD_PAUSE_MS) { hold = null; return null; }
+  if (!hold || hold.name !== best.name) hold = { name: best.name, since: now, fired: false };
+  const progress = Math.min(1, (now - hold.since) / HOLD_MS);
+  if (progress >= 1 && !hold.fired) { hold.fired = true; lastHoldAt = now; flash(HOLDS[best.name]); }
+  return hold.fired ? null : { ...best, progress };
+}
+
+// ---------- dessin ----------
+function drawZones(Z, frame) {
+  ctx.save(); ctx.lineWidth = 2; ctx.strokeStyle = GREEN_DIM; ctx.shadowColor = GREEN; ctx.shadowBlur = 6;
+  const W = canvas.width, c = Z.chest;
+  ctx.setLineDash([10, 10]);
+  ctx.beginPath(); ctx.moveTo(0, Z.up); ctx.lineTo(W, Z.up); ctx.moveTo(0, Z.down); ctx.lineTo(W, Z.down); ctx.stroke();
+  ctx.strokeRect(c.cx - c.half * SIDE_OUT, c.y0, 2 * c.half * SIDE_OUT, c.y1 - c.y0);
+  ctx.setLineDash([]);
+  ctx.strokeRect(c.cx - c.half * CENTER_IN, c.y0, 2 * c.half * CENTER_IN, c.y1 - c.y0);
+  for (const side of ['l', 'r']) {
+    const f = frame[side];
+    if (!f) continue;
+    const armed = hands[side].state === 'arme';
+    ctx.beginPath(); ctx.arc(f.x, f.y, armed ? 16 : 10, 0, Math.PI * 2);
+    ctx.lineWidth = 3; ctx.strokeStyle = armed ? GREEN : 'rgba(255,255,255,0.7)'; ctx.stroke();
+  }
+  ctx.restore();
+}
+function drawRing(x, y, progress) {
+  ctx.save(); ctx.lineWidth = 5; ctx.strokeStyle = GREEN; ctx.shadowColor = GREEN; ctx.shadowBlur = 10;
+  ctx.beginPath(); ctx.arc(x, y, 46, -Math.PI / 2, -Math.PI / 2 + progress * Math.PI * 2); ctx.stroke();
+  ctx.restore();
+}
+/** Texte lisible malgré la vue en miroir (le canvas est retourné par le CSS). */
+function label(text, x, y, color) {
+  ctx.save(); ctx.scale(-1, 1);
+  ctx.font = '600 22px ui-monospace, Consolas, monospace'; ctx.fillStyle = color; ctx.textAlign = 'center';
+  ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
+  ctx.fillText(text, -x, y);
+  ctx.restore();
+}
+
+// ---------- caméra ----------
+hud.textContent = 'Autorise la caméra…';
+const video = document.createElement('video');
+video.playsInline = true; video.muted = true;
+try {
+  video.srcObject = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: false });
+  await video.play();
+} catch (error) {
+  hud.textContent = 'Caméra indisponible (' + (error?.name || 'erreur') + ').\nFerme l\'appli qui la tient (visio, appli de webcam…), puis recharge la page.';
+  throw error;
+}
+canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+hud.textContent = 'Chargement des modèles…';
+const fileset = await FilesetResolver.forVisionTasks(WASM);
+const pose = await PoseLandmarker.createFromOptions(fileset, { baseOptions: { modelAssetPath: POSE_MODEL, delegate: 'GPU' }, runningMode: 'VIDEO', numPoses: 1 });
+const recognizer = await GestureRecognizer.createFromOptions(fileset, { baseOptions: { modelAssetPath: GESTURE_MODEL, delegate: 'GPU' }, runningMode: 'VIDEO', numHands: 2 });
+
+let last = -1, fps = 0, prevT = performance.now();
+const loop = () => {
+  if (video.currentTime !== last) {
+    last = video.currentTime;
+    const now = performance.now();
+    fps = fps * 0.9 + (1000 / Math.max(1, now - prevT)) * 0.1; prevT = now;
+    const body = pose.detectForVideo(video, now);
+    const handsResult = recognizer.recognizeForVideo(video, now);
+    ctx.drawImage(video, 0, 0);
+
+    const lm = body.landmarks?.[0];
+    let frame = null;
+    if (lm) {
+      zoneL = blend(zoneL, points(lm), ZONE_SMOOTHING);
+      frame = gestures(zoneL, now);
+      if (showZones && frame.zones) drawZones(frame.zones, frame);
+      ctx.save(); ctx.shadowColor = GREEN; ctx.shadowBlur = 8;
+      draw.drawConnectors(lm, PoseLandmarker.POSE_CONNECTIONS, { color: GREEN, lineWidth: 3 });
+      draw.drawLandmarks(lm, { color: GREEN, fillColor: '#0b3d1a', lineWidth: 2, radius: 4 });
+      ctx.restore();
+    } else {
+      zoneL = null;
+    }
+
+    const held = holds(handsResult, now);
+    (handsResult.landmarks ?? []).forEach((hand, i) => {
+      const color = i === 0 ? GREEN : CYAN;
+      ctx.save(); ctx.shadowColor = color; ctx.shadowBlur = 8;
+      draw.drawConnectors(hand, GestureRecognizer.HAND_CONNECTIONS, { color, lineWidth: 2 });
+      draw.drawLandmarks(hand, { color, fillColor: color, lineWidth: 1, radius: 3 });
+      ctx.restore();
+      const g = handsResult.gestures?.[i]?.[0];
+      const top = hand.reduce((a, p) => (p.y < a.y ? p : a), hand[0]);
+      const wrist = hand[0];
+      if (g && g.categoryName !== 'None') label(`${NAMES[g.categoryName] ?? g.categoryName} ${g.score.toFixed(2)}`, top.x * canvas.width, top.y * canvas.height - 18, color);
+      if (held && held.i === i) drawRing(wrist.x * canvas.width, (wrist.y + top.y) / 2 * canvas.height, held.progress);
+    });
+
+    const side = (s) => {
+      const f = frame?.[s];
+      if (!f) return 'pas vue';
+      return (hands[s].state === 'arme' ? 'ARMÉE' : 'repos') + `  u ${f.u.toFixed(2)}`;
+    };
+    hud.textContent =
+      `MIROIR · CAPTEURS          ${Math.round(fps)} im/s\n` +
+      `corps   : ${!lm ? 'personne' : frame?.body ? 'vu (épaules + hanches)' : 'recule un peu'}\n` +
+      `mains   : ${(handsResult.landmarks ?? []).length}\n` +
+      `gauche  : ${side('l')}\n` +
+      `droite  : ${side('r')}\n` +
+      `tenu    : ${held ? `${NAMES[held.name]} ${Math.round(held.progress * 100)} %` : '—'}`;
+  }
+  requestAnimationFrame(loop);
+};
+loop();
+</script>
+</body>
+</html>
